@@ -12,15 +12,6 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# Enable CORS for Streamlit frontend - to run frontend that communicates with backend
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],    
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
 # Root endpoint
 @app.get("/")
 def home():
