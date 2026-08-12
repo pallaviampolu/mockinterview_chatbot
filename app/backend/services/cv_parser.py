@@ -138,28 +138,6 @@ def extract_text_from_docx(file_bytes: bytes) -> str:
     except Exception as exc:
         raise CVParserError(f"Unable to read DOCX file: {exc}") from exc
 
-def extract_email(text: str) -> str | None:
-    """
-    Extract the first email address found in the CV.
-    """
-    pattern = r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"
-    match = re.search(pattern, text)
-
-    return match.group(0) if match else None
-
-
-def extract_phone(text: str) -> str | None:
-    """
-    Extract a possible phone number.
-    """
-    pattern = r"(?<!\d)(?:\+?\d{1,3}[\s\-()]*)?(?:\d[\s\-()]*){9,12}(?!\d)"
-    match = re.search(pattern, text)
-
-    if not match:
-        return None
-
-    return re.sub(r"\s+", " ", match.group(0)).strip()
-
 
 def extract_skills(text: str) -> list[str]:
     """
@@ -326,8 +304,6 @@ def parse_cv_bytes(
         "file_type": extension.removeprefix("."),
         "character_count": len(text),
         "word_count": len(text.split()),
-        "email": extract_email(text),
-        "phone": extract_phone(text),
         "skills": extract_skills(text),
         "education": extract_education(text),
         "experience": extract_experience(text),
