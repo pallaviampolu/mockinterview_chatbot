@@ -25,6 +25,7 @@ if gemini_api_key:
     gemini_client = genai.Client(
         api_key=gemini_api_key
     )
+
 # ollama
 
 def generate_with_ollama(
@@ -99,7 +100,6 @@ def generate_with_gemini(
             f"Gemini generation failed: {exc}"
         ) from exc
 
-# llm function
 
 def generate_text(
     prompt: str,
