@@ -62,6 +62,9 @@ class InterviewSession(Base):
 
     interview_type = Column(String)
 
+    # LLM provider used for this interview
+    provider = Column(String)
+
     created_at = Column(
         DateTime(timezone=True),
         server_default=func.now()

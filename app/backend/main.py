@@ -1,39 +1,81 @@
+# main.py
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-# Import API routers
 from routers.cv import router as cv_router
 from routers.interview import router as interview_router
-from routers.evaluation import router as evaluation_router
+
+
+# ============================================================
+# FastAPI Application
+# ============================================================
 
 app = FastAPI(
     title="CV-Aware Interview Preparation Chatbot API",
-    description="Backend API for generating CV-based interview questions and rubric-based evaluation.",
-    version="1.0.0"
+    description=(
+        "Backend API for CV parsing, personalised interview "
+        "question generation, rubric-based evaluation, "
+        "and interview score calculation."
+    ),
+    version="1.0.0",
 )
 
-# Root endpoint
+
+# ============================================================
+# CORS Configuration
+# ============================================================
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:8501",
+        "http://127.0.0.1:8501",
+    ],
+    allow_credentials=True,
+    allow_methods=[
+        "GET",
+        "POST",
+    ],
+    allow_headers=["*"],
+)
+
+
+# ============================================================
+# Root Endpoint
+# ============================================================
+
 @app.get("/")
-def home():
+def root() -> dict[str, str]:
     return {
-        "message": "Welcome to the CV-Aware Interview Preparation Chatbot API"
+        "message": (
+            "CV-Aware Interview Preparation "
+            "Chatbot API is running."
+        )
     }
 
-# Register API routers
+
+# ============================================================
+# Health Check
+# ============================================================
+
+@app.get("/health")
+def health_check() -> dict[str, str]:
+    return {
+        "status": "healthy"
+    }
+
+
+# ============================================================
+# Routers
+# ============================================================
+
 app.include_router(
     cv_router,
     prefix="/cv",
-    tags=["CV"]
+    tags=["CV Parser"],
 )
 
 app.include_router(
     interview_router,
-    prefix="/interview",
-    tags=["Interview"]
-)
-
-app.include_router(
-    evaluation_router,
-    prefix="/evaluation",
-    tags=["Evaluation"]
 )
