@@ -9,7 +9,25 @@ from models import (
     Question,
     Response,
     Evaluation,
+    User,
 )
+
+def create_user(
+    db: Session,
+    role: str = "candidate",
+) -> User:
+
+    user = User(
+        role=role
+    )
+
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+
+    return user
+
+
 
 
 # ============================================================

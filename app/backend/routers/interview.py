@@ -10,11 +10,13 @@ from services.question_generator import generate_interview_questions
 from services.rubric_evaluator import evaluate_response
 
 from services.interview_service import (
+    create_user,
     create_interview_session,
     save_questions,
     save_response,
     save_evaluation,
     calculate_session_score,
+    get_interview_session,
 )
 
 
@@ -29,7 +31,6 @@ router = APIRouter(
 # ============================================================
 
 class QuestionRequest(BaseModel):
-    user_id: int
     cv_text: str
     job_role: str
     provider: str = "ollama"
@@ -46,7 +47,7 @@ class EvaluationRequest(BaseModel):
 
 
 # ============================================================
-# Generate Questions + Create Interview Session
+# Generate First 5 Questions
 # ============================================================
 
 @router.post("/questions")
@@ -56,31 +57,53 @@ def create_questions(
 ):
 
     try:
-        # 1. Create interview session
+        # ----------------------------------------------------
+        # 1. Automatically create a new user
+        # ----------------------------------------------------
+
+        user = create_user(
+            db=db,
+            role="candidate",
+        )
+
+        # ----------------------------------------------------
+        # 2. Create interview session
+        # ----------------------------------------------------
+
         interview_session = create_interview_session(
             db=db,
-            user_id=request.user_id,
+            user_id=user.user_id,
             job_role=request.job_role,
             provider=request.provider,
             interview_type=request.interview_type,
         )
 
-        # 2. Generate questions
-        generated_questions = generate_interview_questions(
+        # ----------------------------------------------------
+        # 3. Generate exactly 5 questions
+        # ----------------------------------------------------
+
+        question_list = generate_interview_questions(
             cv_text=request.cv_text,
             job_role=request.job_role,
             provider=request.provider,
             number_of_questions=5,
         )
 
-        # 3. Convert the LLM string output into a list
-        question_list = [
-            line.strip()
-            for line in generated_questions.splitlines()
-            if line.strip()
-        ]
+        if not question_list:
+            raise RuntimeError(
+                "No interview questions were generated."
+            )
 
+        if len(question_list) != 5:
+            raise RuntimeError(
+                f"Expected 5 questions but received "
+                f"{len(question_list)}."
+            )
+
+        # ----------------------------------------------------
         # 4. Save questions in PostgreSQL
+        # ----------------------------------------------------
+
         saved_questions = save_questions(
             db=db,
             session_id=interview_session.session_id,
@@ -88,13 +111,16 @@ def create_questions(
             question_type=request.interview_type,
         )
 
-        # 5. Return saved questions
+        # ----------------------------------------------------
+        # 5. Return result
+        # ----------------------------------------------------
+
         return {
+            "user_id": user.user_id,
             "session_id": interview_session.session_id,
-            "user_id": request.user_id,
             "job_role": request.job_role,
-            "interview_type": request.interview_type,
             "provider": request.provider,
+            "interview_type": request.interview_type,
             "questions": [
                 {
                     "question_id": question.question_id,
@@ -105,6 +131,7 @@ def create_questions(
         }
 
     except Exception as exc:
+
         db.rollback()
 
         raise HTTPException(
@@ -114,7 +141,99 @@ def create_questions(
 
 
 # ============================================================
-# Evaluate Answer + Save Response + Save Evaluation
+# Generate 5 More Questions in Existing Session
+# ============================================================
+
+@router.post("/{session_id}/more-questions")
+def generate_more_questions(
+    session_id: int,
+    request: QuestionRequest,
+    db: Session = Depends(get_db),
+):
+
+    try:
+        # ----------------------------------------------------
+        # 1. Check that interview session exists
+        # ----------------------------------------------------
+
+        interview_session = get_interview_session(
+            db=db,
+            session_id=session_id,
+        )
+
+        if interview_session is None:
+            raise HTTPException(
+                status_code=404,
+                detail="Interview session not found."
+            )
+
+        # ----------------------------------------------------
+        # 2. Generate another 5 questions
+        # ----------------------------------------------------
+
+        question_list = generate_interview_questions(
+            cv_text=request.cv_text,
+            job_role=request.job_role,
+            provider=request.provider,
+            number_of_questions=5,
+        )
+
+        if not question_list:
+            raise RuntimeError(
+                "No additional questions were generated."
+            )
+
+        if len(question_list) != 5:
+            raise RuntimeError(
+                f"Expected 5 questions but received "
+                f"{len(question_list)}."
+            )
+
+        # ----------------------------------------------------
+        # 3. Save questions under SAME interview session
+        # ----------------------------------------------------
+
+        saved_questions = save_questions(
+            db=db,
+            session_id=session_id,
+            questions=question_list,
+            question_type=request.interview_type,
+        )
+
+        # ----------------------------------------------------
+        # 4. Return new questions
+        # ----------------------------------------------------
+
+        return {
+            "user_id": interview_session.user_id,
+            "session_id": session_id,
+            "job_role": interview_session.job_role,
+            "provider": interview_session.provider,
+            "interview_type": interview_session.interview_type,
+            "questions": [
+                {
+                    "question_id": question.question_id,
+                    "question_text": question.question_text,
+                }
+                for question in saved_questions
+            ],
+        }
+
+    except HTTPException:
+        raise
+
+    except Exception as exc:
+
+        db.rollback()
+
+        raise HTTPException(
+            status_code=500,
+            detail=str(exc),
+        ) from exc
+
+
+# ============================================================
+# Evaluate Candidate Answer
 # ============================================================
 
 @router.post("/evaluate")
@@ -124,14 +243,35 @@ def evaluate_answer(
 ):
 
     try:
-        # 1. Save candidate answer
+        # ----------------------------------------------------
+        # 1. Check interview session exists
+        # ----------------------------------------------------
+
+        interview_session = get_interview_session(
+            db=db,
+            session_id=request.session_id,
+        )
+
+        if interview_session is None:
+            raise HTTPException(
+                status_code=404,
+                detail="Interview session not found."
+            )
+
+        # ----------------------------------------------------
+        # 2. Save candidate response
+        # ----------------------------------------------------
+
         saved_response = save_response(
             db=db,
             question_id=request.question_id,
             answer_text=request.answer,
         )
 
-        # 2. Evaluate answer using rubric
+        # ----------------------------------------------------
+        # 3. Evaluate answer using rubric
+        # ----------------------------------------------------
+
         evaluation_result = evaluate_response(
             question=request.question,
             candidate_answer=request.answer,
@@ -139,15 +279,22 @@ def evaluate_answer(
             provider=request.provider,
         )
 
-        # 3. Save evaluation in PostgreSQL
+        # ----------------------------------------------------
+        # 4. Save evaluation
+        # ----------------------------------------------------
+
         saved_evaluation = save_evaluation(
             db=db,
             response_id=saved_response.response_id,
             evaluation_data=evaluation_result,
         )
 
-        # 4. Return evaluation result
+        # ----------------------------------------------------
+        # 5. Return evaluation result
+        # ----------------------------------------------------
+
         return {
+            "user_id": interview_session.user_id,
             "session_id": request.session_id,
             "question_id": request.question_id,
             "response_id": saved_response.response_id,
@@ -158,7 +305,11 @@ def evaluate_answer(
             "evaluation": evaluation_result,
         }
 
+    except HTTPException:
+        raise
+
     except Exception as exc:
+
         db.rollback()
 
         raise HTTPException(
@@ -168,7 +319,7 @@ def evaluate_answer(
 
 
 # ============================================================
-# Get Overall Interview Score
+# Get Final Interview Score
 # ============================================================
 
 @router.get("/{session_id}/score")
@@ -178,14 +329,43 @@ def get_interview_score(
 ):
 
     try:
+        # ----------------------------------------------------
+        # Check session exists
+        # ----------------------------------------------------
+
+        interview_session = get_interview_session(
+            db=db,
+            session_id=session_id,
+        )
+
+        if interview_session is None:
+            raise HTTPException(
+                status_code=404,
+                detail="Interview session not found."
+            )
+
+        # ----------------------------------------------------
+        # Calculate final score
+        # ----------------------------------------------------
+
         result = calculate_session_score(
             db=db,
             session_id=session_id,
         )
 
+        # Add session information
+        result["user_id"] = interview_session.user_id
+        result["job_role"] = interview_session.job_role
+        result["provider"] = interview_session.provider
+        result["interview_type"] = interview_session.interview_type
+
         return result
 
+    except HTTPException:
+        raise
+
     except Exception as exc:
+
         raise HTTPException(
             status_code=500,
             detail=str(exc),

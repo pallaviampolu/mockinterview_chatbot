@@ -6,11 +6,8 @@ import time
 import ollama
 from dotenv import load_dotenv
 from google import genai
+from huggingface_hub import InferenceClient
 
-
-# ============================================================
-# Load environment variables
-# ============================================================
 
 load_dotenv()
 
@@ -23,18 +20,25 @@ OLLAMA_MODEL = "llama3.1"
 
 GEMINI_MODEL = "gemini-3.6-flash"
 
+HUGGINGFACE_MODEL = "deepseek-ai/DeepSeek-V3-0324"
+
 DEFAULT_PROVIDER = "ollama"
 
 QUESTION_TEMPERATURE = 0.5
-
 EVALUATION_TEMPERATURE = 0.0
 
 
 # ============================================================
-# Gemini Client
+# API Keys
 # ============================================================
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+HF_TOKEN = os.getenv("HF_TOKEN")
+
+
+# ============================================================
+# Clients
+# ============================================================
 
 gemini_client = None
 
@@ -44,8 +48,17 @@ if GEMINI_API_KEY:
     )
 
 
+huggingface_client = None
+
+if HF_TOKEN:
+    huggingface_client = InferenceClient(
+        api_key=HF_TOKEN,
+        provider="auto",
+    )
+
+
 # ============================================================
-# Ollama Generation
+# Ollama
 # ============================================================
 
 def generate_with_ollama(
@@ -53,9 +66,6 @@ def generate_with_ollama(
     system_prompt: str = "",
     temperature: float = QUESTION_TEMPERATURE,
 ) -> str:
-    """
-    Generate text using a local Ollama model.
-    """
 
     messages = []
 
@@ -99,7 +109,7 @@ def generate_with_ollama(
 
 
 # ============================================================
-# Gemini Generation
+# Gemini
 # ============================================================
 
 def generate_with_gemini(
@@ -108,11 +118,6 @@ def generate_with_gemini(
     temperature: float = QUESTION_TEMPERATURE,
     max_retries: int = 3,
 ) -> str:
-    """
-    Generate text using Google Gemini.
-
-    Retries temporary 503 / UNAVAILABLE errors.
-    """
 
     if gemini_client is None:
         raise RuntimeError(
@@ -149,18 +154,14 @@ def generate_with_gemini(
 
             error_text = str(exc)
 
-            is_temporary_error = (
+            temporary_error = (
                 "503" in error_text
                 or "UNAVAILABLE" in error_text
                 or "high demand" in error_text.lower()
             )
 
-            if is_temporary_error and attempt < max_retries - 1:
-
-                wait_time = 2 ** attempt
-
-                time.sleep(wait_time)
-
+            if temporary_error and attempt < max_retries - 1:
+                time.sleep(2 ** attempt)
                 continue
 
             raise RuntimeError(
@@ -173,6 +174,61 @@ def generate_with_gemini(
 
 
 # ============================================================
+# Hugging Face
+# ============================================================
+
+def generate_with_huggingface(
+    prompt: str,
+    system_prompt: str = "",
+    temperature: float = QUESTION_TEMPERATURE,
+) -> str:
+
+    if huggingface_client is None:
+        raise RuntimeError(
+            "HF_TOKEN was not found."
+        )
+
+    messages = []
+
+    if system_prompt:
+        messages.append(
+            {
+                "role": "system",
+                "content": system_prompt,
+            }
+        )
+
+    messages.append(
+        {
+            "role": "user",
+            "content": prompt,
+        }
+    )
+
+    try:
+        response = huggingface_client.chat.completions.create(
+            model=HUGGINGFACE_MODEL,
+            messages=messages,
+            temperature=temperature,
+            max_tokens=500,
+        )
+
+        content = response.choices[0].message.content
+
+        if not content or not content.strip():
+            raise RuntimeError(
+                "Hugging Face returned an empty response."
+            )
+
+        return content.strip()
+
+    except Exception as exc:
+        raise RuntimeError(
+            f"Hugging Face generation failed: {exc}"
+        ) from exc
+
+
+# ============================================================
 # Unified Provider Function
 # ============================================================
 
@@ -182,14 +238,6 @@ def generate_text(
     system_prompt: str = "",
     temperature: float = QUESTION_TEMPERATURE,
 ) -> str:
-    """
-    Generate text using the selected LLM provider.
-
-    Supported providers:
-    - ollama
-    - gemini
-    - google
-    """
 
     if not prompt or not prompt.strip():
         raise ValueError(
@@ -214,7 +262,20 @@ def generate_text(
             temperature=temperature,
         )
 
+    elif provider in {
+        "huggingface",
+        "hugging_face",
+        "hf",
+    }:
+
+        return generate_with_huggingface(
+            prompt=prompt,
+            system_prompt=system_prompt,
+            temperature=temperature,
+        )
+
     else:
+
         raise ValueError(
             f"Unsupported LLM provider: {provider}"
         )
