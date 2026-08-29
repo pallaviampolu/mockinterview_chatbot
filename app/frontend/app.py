@@ -4,7 +4,6 @@ import time
 
 import requests
 import streamlit as st
-from streamlit_autorefresh import st_autorefresh
 
 
 # ============================================================
@@ -37,6 +36,7 @@ st.markdown(
     <h1 style="margin: 0; padding: 0; line-height: 1;">
         MOCK-BOT
     </h1>
+
     <div style="
         text-align: right;
         font-size: 13px;
@@ -45,6 +45,7 @@ st.markdown(
         line-height: 1;
     ">
         an interview preparation chatbot
+    </div>
 </div>
 """,
     unsafe_allow_html=True,
@@ -64,6 +65,9 @@ st.write(
 
 if "user_id" not in st.session_state:
     st.session_state.user_id = None
+
+if "cv_id" not in st.session_state:
+    st.session_state.cv_id = None
 
 if "cv_text" not in st.session_state:
     st.session_state.cv_text = ""
@@ -98,12 +102,50 @@ if "question_start_time" not in st.session_state:
 if "processed_questions" not in st.session_state:
     st.session_state.processed_questions = set()
 
+if "auto_submit_question_id" not in st.session_state:
+    st.session_state.auto_submit_question_id = None
+
 
 # ============================================================
-# Helper Function - Submit/Evaluate Answer
+# Timer
 # ============================================================
 
-def submit_interview_answer(
+@st.fragment(run_every="1s")
+def show_timer(start_time: float):
+
+    elapsed = time.time() - start_time
+
+    remaining = max(
+        0,
+        QUESTION_TIME_LIMIT - int(elapsed),
+    )
+
+    minutes = remaining // 60
+    seconds = remaining % 60
+
+    if remaining > 60:
+        st.info(
+            f"⏱ Time remaining: "
+            f"{minutes:02d}:{seconds:02d}"
+        )
+
+    elif remaining > 0:
+        st.warning(
+            f"⏱ Time remaining: "
+            f"{minutes:02d}:{seconds:02d}"
+        )
+
+    else:
+        st.error(
+            "⏱ Time is up."
+        )
+
+
+# ============================================================
+# Submit Answer
+# ============================================================
+
+def submit_answer(
     current_question: dict,
     answer: str,
     current_index: int,
@@ -119,56 +161,196 @@ def submit_interview_answer(
 
     if not submitted_answer:
         submitted_answer = (
-            "No answer was submitted within the five-minute time limit."
+            "No answer was submitted within "
+            "the five-minute time limit."
         )
 
-    evaluation_payload = {
-        "session_id": st.session_state.session_id,
-        "question_id": question_id,
-        "question": current_question["question_text"],
-        "answer": submitted_answer,
-        "cv_text": st.session_state.cv_text,
-        "provider": st.session_state.provider,
+
+    # ========================================================
+    # Answer Time
+    # ========================================================
+
+    if st.session_state.question_start_time is not None:
+
+        time_taken_seconds = int(
+            time.time()
+            - st.session_state.question_start_time
+        )
+
+    else:
+        time_taken_seconds = 0
+
+
+    time_taken_seconds = min(
+        time_taken_seconds,
+        QUESTION_TIME_LIMIT,
+    )
+
+    answer_minutes = (
+        time_taken_seconds // 60
+    )
+
+    answer_seconds = (
+        time_taken_seconds % 60
+    )
+
+    time_taken_display = (
+        f"{answer_minutes:02d}:"
+        f"{answer_seconds:02d}"
+    )
+
+
+    # ========================================================
+    # Payload
+    # ========================================================
+
+    payload = {
+        "session_id": (
+            st.session_state.session_id
+        ),
+        "question_id": (
+            question_id
+        ),
+        "question": (
+            current_question[
+                "question_text"
+            ]
+        ),
+        "answer": (
+            submitted_answer
+        ),
+        "cv_text": (
+            st.session_state.cv_text
+        ),
+        "provider": (
+            st.session_state.provider
+        ),
     }
+
 
     try:
 
-        response = requests.post(
-            f"{API_BASE_URL}/interview/evaluate",
-            json=evaluation_payload,
-            timeout=180,
+        # ====================================================
+        # Start submission timer
+        # ====================================================
+
+        submission_start_time = (
+            time.perf_counter()
         )
+
+
+        with st.spinner(
+            "Submitting and evaluating your answer..."
+        ):
+
+            response = requests.post(
+                (
+                    f"{API_BASE_URL}"
+                    "/interview/evaluate"
+                ),
+                json=payload,
+                timeout=180,
+            )
+
+
+        # ====================================================
+        # End submission timer
+        # ====================================================
+
+        submission_time_seconds = round(
+            time.perf_counter()
+            - submission_start_time,
+            2,
+        )
+
 
         if response.status_code == 200:
 
             result = response.json()
 
-            evaluation = result["evaluation"]
+            evaluation = (
+                result["evaluation"]
+            )
 
-            # Mark question as processed
+
+            # ------------------------------------------------
+            # Mark question completed
+            # ------------------------------------------------
+
             st.session_state.processed_questions.add(
                 question_id
             )
 
-            # Save result
-            st.session_state.evaluations.append(
-                {
-                    "question_number": current_index + 1,
-                    "question": current_question[
-                        "question_text"
-                    ],
-                    "answer": submitted_answer,
-                    "evaluation": evaluation,
-                }
+
+            # ------------------------------------------------
+            # Prevent duplicate results
+            # ------------------------------------------------
+
+            already_saved = any(
+                item.get("question_id")
+                == question_id
+                for item
+                in st.session_state.evaluations
             )
 
-            # Move to next question
-            st.session_state.current_question_index += 1
 
-            # Reset timer
+            if not already_saved:
+
+                st.session_state.evaluations.append(
+                    {
+                        "question_id": (
+                            question_id
+                        ),
+
+                        "question_number": (
+                            current_index + 1
+                        ),
+
+                        "question": (
+                            current_question[
+                                "question_text"
+                            ]
+                        ),
+
+                        "answer": (
+                            submitted_answer
+                        ),
+
+                        # User answering time
+                        "time_taken_seconds": (
+                            time_taken_seconds
+                        ),
+
+                        "time_taken_display": (
+                            time_taken_display
+                        ),
+
+                        # Backend processing time
+                        "submission_time_seconds": (
+                            submission_time_seconds
+                        ),
+
+                        "evaluation": (
+                            evaluation
+                        ),
+                    }
+                )
+
+
+            # =================================================
+            # Move to Next Question
+            # =================================================
+
+            st.session_state.current_question_index = (
+                current_index + 1
+            )
+
             st.session_state.question_start_time = None
 
+            st.session_state.auto_submit_question_id = None
+
             st.rerun()
+
 
         else:
 
@@ -178,11 +360,13 @@ def submit_interview_answer(
                 f"{response.text}"
             )
 
+
     except requests.Timeout:
 
         st.error(
             "Evaluation took too long."
         )
+
 
     except requests.RequestException as exc:
 
@@ -191,11 +375,20 @@ def submit_interview_answer(
         )
 
 
+    except Exception as exc:
+
+        st.error(
+            f"Unexpected error: {exc}"
+        )
+
+
 # ============================================================
 # 1. Interview Setup
 # ============================================================
 
-st.subheader("1. Interview Setup")
+st.subheader(
+    "1. Interview Setup"
+)
 
 
 job_role = st.text_input(
@@ -241,7 +434,9 @@ uploaded_file = st.file_uploader(
 
 if uploaded_file is not None:
 
-    if st.button("Parse CV"):
+    if st.button(
+        "Parse CV"
+    ):
 
         try:
 
@@ -253,6 +448,7 @@ if uploaded_file is not None:
                 )
             }
 
+
             with st.spinner(
                 "Parsing CV..."
             ):
@@ -262,6 +458,7 @@ if uploaded_file is not None:
                     files=files,
                     timeout=60,
                 )
+
 
             if response.status_code == 200:
 
@@ -275,10 +472,14 @@ if uploaded_file is not None:
                     "CV parsed successfully."
                 )
 
-                skills = result["data"].get(
+
+                skills = result[
+                    "data"
+                ].get(
                     "skills",
                     [],
                 )
+
 
                 if skills:
 
@@ -290,6 +491,7 @@ if uploaded_file is not None:
                         ", ".join(skills)
                     )
 
+
             else:
 
                 st.error(
@@ -297,6 +499,7 @@ if uploaded_file is not None:
                     f"{response.status_code}: "
                     f"{response.text}"
                 )
+
 
         except requests.RequestException as exc:
 
@@ -335,6 +538,7 @@ if (
                 "Please enter a target job role."
             )
 
+
         else:
 
             try:
@@ -343,60 +547,89 @@ if (
                     job_role.strip()
                 )
 
-                st.session_state.provider = provider
+                st.session_state.provider = (
+                    provider
+                )
+
 
                 payload = {
                     "cv_text": (
                         st.session_state.cv_text
                     ),
+
                     "job_role": (
                         st.session_state.job_role
                     ),
+
                     "provider": (
                         st.session_state.provider
                     ),
-                    "interview_type": "personalised",
+
+                    "interview_type": (
+                        "personalised"
+                    ),
                 }
 
+
                 with st.spinner(
-                    "Generating personalised interview questions..."
+                    "Generating personalised "
+                    "interview questions..."
                 ):
 
                     response = requests.post(
-                        f"{API_BASE_URL}/interview/questions",
+                        (
+                            f"{API_BASE_URL}"
+                            "/interview/questions"
+                        ),
                         json=payload,
                         timeout=180,
                     )
+
 
                 if response.status_code == 200:
 
                     result = response.json()
 
+
                     st.session_state.user_id = (
                         result["user_id"]
                     )
+
+
+                    if "cv_id" in result:
+
+                        st.session_state.cv_id = (
+                            result["cv_id"]
+                        )
+
 
                     st.session_state.session_id = (
                         result["session_id"]
                     )
 
+
                     st.session_state.questions = (
                         result["questions"]
                     )
+
 
                     st.session_state.current_question_index = 0
 
                     st.session_state.evaluations = []
 
+                    st.session_state.processed_questions = set()
+
+                    st.session_state.question_start_time = None
+
+                    st.session_state.auto_submit_question_id = None
+
                     st.session_state.interview_started = True
 
                     st.session_state.interview_ended = False
 
-                    st.session_state.question_start_time = None
-
-                    st.session_state.processed_questions = set()
 
                     st.rerun()
+
 
                 else:
 
@@ -406,11 +639,13 @@ if (
                         f"{response.text}"
                     )
 
+
             except requests.Timeout:
 
                 st.error(
                     "Question generation took too long."
                 )
+
 
             except requests.RequestException as exc:
 
@@ -435,9 +670,11 @@ if (
         "2. Mock Interview"
     )
 
+
     current_index = (
         st.session_state.current_question_index
     )
+
 
     total_questions = len(
         st.session_state.questions
@@ -457,6 +694,13 @@ if (
         )
 
 
+        question_id = (
+            current_question[
+                "question_id"
+            ]
+        )
+
+
         # ----------------------------------------------------
         # Start timer
         # ----------------------------------------------------
@@ -471,42 +715,21 @@ if (
             )
 
 
-        # ----------------------------------------------------
-        # Auto-refresh every second
-        # ----------------------------------------------------
-
-        st_autorefresh(
-            interval=1000,
-            key=f"timer_{current_index}",
-        )
-
-
-        # ----------------------------------------------------
-        # Calculate remaining time
-        # ----------------------------------------------------
-
-        elapsed_time = (
+        elapsed = (
             time.time()
             - st.session_state.question_start_time
         )
 
+
         remaining_seconds = max(
             0,
             QUESTION_TIME_LIMIT
-            - int(elapsed_time),
-        )
-
-        minutes = (
-            remaining_seconds // 60
-        )
-
-        seconds = (
-            remaining_seconds % 60
+            - int(elapsed),
         )
 
 
         # ----------------------------------------------------
-        # Question Progress
+        # Progress
         # ----------------------------------------------------
 
         st.write(
@@ -517,35 +740,16 @@ if (
 
 
         # ----------------------------------------------------
-        # Timer Display
+        # Timer
         # ----------------------------------------------------
 
-        if remaining_seconds > 60:
-
-            st.info(
-                f"⏱ Time remaining: "
-                f"{minutes:02d}:"
-                f"{seconds:02d}"
-            )
-
-        elif remaining_seconds > 0:
-
-            st.warning(
-                f"⏱ Time remaining: "
-                f"{minutes:02d}:"
-                f"{seconds:02d}"
-            )
-
-        else:
-
-            st.error(
-                "⏱ Time is up. "
-                "Your answer is being submitted automatically."
-            )
+        show_timer(
+            st.session_state.question_start_time
+        )
 
 
         # ----------------------------------------------------
-        # Display Question
+        # Question
         # ----------------------------------------------------
 
         st.info(
@@ -566,80 +770,74 @@ if (
             placeholder=(
                 "Type your interview answer here..."
             ),
-            disabled=(
-                remaining_seconds == 0
-            ),
         )
 
 
-        # ----------------------------------------------------
-        # Manual Submit
-        # ----------------------------------------------------
+        # ====================================================
+        # Submit Answer
+        # ====================================================
 
-        if remaining_seconds > 0:
+        if st.button(
+            "Submit Answer",
+            key=f"submit_{current_index}",
+        ):
 
-            if st.button(
-                "Submit Answer",
-                key=f"submit_{current_index}",
-            ):
+            if not answer.strip():
 
-                if not answer.strip():
-
-                    st.warning(
-                        "Please enter an answer."
-                    )
-
-                else:
-
-                    with st.spinner(
-                        "Evaluating your answer..."
-                    ):
-
-                        submit_interview_answer(
-                            current_question=(
-                                current_question
-                            ),
-                            answer=answer,
-                            current_index=(
-                                current_index
-                            ),
-                        )
+                st.warning(
+                    "Please enter an answer."
+                )
 
 
-        # ----------------------------------------------------
-        # Automatic Submission
-        # ----------------------------------------------------
+            else:
 
-        else:
+                submit_answer(
+                    current_question=(
+                        current_question
+                    ),
 
-            question_id = (
-                current_question[
-                    "question_id"
-                ]
-            )
+                    answer=answer,
+
+                    current_index=(
+                        current_index
+                    ),
+                )
+
+
+        # ====================================================
+        # Automatic Timeout
+        # ====================================================
+
+        if remaining_seconds <= 0:
 
             if (
                 question_id
                 not in st.session_state.processed_questions
+                and
+                st.session_state.auto_submit_question_id
+                != question_id
             ):
 
-                with st.spinner(
-                    "Submitting and evaluating answer..."
-                ):
+                st.session_state.auto_submit_question_id = (
+                    question_id
+                )
 
-                    submit_interview_answer(
-                        current_question=(
-                            current_question
-                        ),
-                        answer=answer,
-                        current_index=(
-                            current_index
-                        ),
-                    )
+
+                submit_answer(
+                    current_question=(
+                        current_question
+                    ),
+
+                    answer=answer,
+
+                    current_index=(
+                        current_index
+                    ),
+                )
 
 
     # ========================================================
-    # Current Batch Completed
+    # Batch Complete
     # ========================================================
 
     else:
@@ -649,11 +847,15 @@ if (
             f"{total_questions} interview questions."
         )
 
+
         st.subheader(
             "Would you like to continue?"
         )
 
-        col1, col2 = st.columns(2)
+
+        col1, col2 = st.columns(
+            2
+        )
 
 
         # ----------------------------------------------------
@@ -667,7 +869,13 @@ if (
                 use_container_width=True,
             ):
 
-                st.session_state.interview_ended = True
+                st.session_state.interview_ended = (
+                    True
+                )
+
+                st.session_state.question_start_time = (
+                    None
+                )
 
                 st.rerun()
 
@@ -689,16 +897,20 @@ if (
                         "cv_text": (
                             st.session_state.cv_text
                         ),
+
                         "job_role": (
                             st.session_state.job_role
                         ),
+
                         "provider": (
                             st.session_state.provider
                         ),
+
                         "interview_type": (
                             "personalised"
                         ),
                     }
+
 
                     with st.spinner(
                         "Generating 5 more questions..."
@@ -706,7 +918,8 @@ if (
 
                         response = requests.post(
                             (
-                                f"{API_BASE_URL}/interview/"
+                                f"{API_BASE_URL}"
+                                f"/interview/"
                                 f"{st.session_state.session_id}"
                                 "/more-questions"
                             ),
@@ -714,21 +927,28 @@ if (
                             timeout=180,
                         )
 
+
                     if response.status_code == 200:
 
                         result = response.json()
 
-                        new_questions = (
+
+                        st.session_state.questions.extend(
                             result["questions"]
                         )
 
-                        st.session_state.questions.extend(
-                            new_questions
+
+                        st.session_state.question_start_time = (
+                            None
                         )
 
-                        st.session_state.question_start_time = None
+                        st.session_state.auto_submit_question_id = (
+                            None
+                        )
+
 
                         st.rerun()
+
 
                     else:
 
@@ -738,11 +958,13 @@ if (
                             f"{response.text}"
                         )
 
+
                 except requests.Timeout:
 
                     st.error(
                         "Question generation took too long."
                     )
+
 
                 except requests.RequestException as exc:
 
@@ -766,6 +988,7 @@ if (
         "Interview completed."
     )
 
+
     st.subheader(
         "3. Final Interview Result"
     )
@@ -775,18 +998,22 @@ if (
 
         response = requests.get(
             (
-                f"{API_BASE_URL}/interview/"
+                f"{API_BASE_URL}"
+                f"/interview/"
                 f"{st.session_state.session_id}"
                 "/score"
             ),
             timeout=30,
         )
 
+
         if response.status_code == 200:
 
             final_result = response.json()
 
+
             col1, col2 = st.columns(2)
+
 
             with col1:
 
@@ -798,6 +1025,7 @@ if (
                     ),
                 )
 
+
             with col2:
 
                 st.metric(
@@ -808,12 +1036,14 @@ if (
                     ),
                 )
 
+
             st.write(
                 "**Evaluated Answers:**",
                 final_result[
                     "evaluated_answers"
                 ],
             )
+
 
             st.write(
                 "**Total Score:**",
@@ -824,12 +1054,30 @@ if (
                 ),
             )
 
+
+            if "provider" in final_result:
+
+                st.write(
+                    "**LLM Provider:**",
+                    final_result["provider"],
+                )
+
+
+            if "job_role" in final_result:
+
+                st.write(
+                    "**Target Job Role:**",
+                    final_result["job_role"],
+                )
+
+
         else:
 
             st.error(
                 f"Unable to retrieve final score: "
                 f"{response.text}"
             )
+
 
     except requests.RequestException as exc:
 
@@ -839,7 +1087,7 @@ if (
 
 
     # ========================================================
-    # 4. Detailed Rubric Results
+    # Detailed Rubric Results
     # ========================================================
 
     st.divider()
@@ -851,9 +1099,10 @@ if (
 
     for item in st.session_state.evaluations:
 
-        evaluation = item[
-            "evaluation"
-        ]
+        evaluation = (
+            item["evaluation"]
+        )
+
 
         with st.expander(
             (
@@ -863,6 +1112,7 @@ if (
                 f"{evaluation['total_score']}/25"
             )
         ):
+
 
             st.markdown(
                 "#### Interview Question"
@@ -881,6 +1131,53 @@ if (
                 item["answer"]
             )
 
+
+            # =================================================
+            # Time Information
+            # =================================================
+
+            st.markdown(
+                "#### Time Information"
+            )
+
+
+            time_col1, time_col2 = (
+                st.columns(2)
+            )
+
+
+            with time_col1:
+
+                st.metric(
+                    "Answer Time",
+                    item[
+                        "time_taken_display"
+                    ],
+                    help=(
+                        "Time taken by the user "
+                        "before submitting the answer."
+                    ),
+                )
+
+
+            with time_col2:
+
+                st.metric(
+                    "Submission Time",
+                    (
+                        f"{item['submission_time_seconds']:.2f} sec"
+                    ),
+                    help=(
+                        "Time taken after submitting "
+                        "the answer until the rubric "
+                        "evaluation was returned."
+                    ),
+                )
+
+
+            # =================================================
+            # Rubric Scores
+            # =================================================
 
             st.markdown(
                 "#### Rubric Scores"
@@ -946,6 +1243,10 @@ if (
                     ),
                 )
 
+
+            # =================================================
+            # Rubric Feedback
+            # =================================================
 
             st.markdown(
                 "#### Rubric Feedback"
@@ -1035,11 +1336,13 @@ if (
 
     st.divider()
 
+
     if st.button(
         "Start New Interview"
     ):
 
         st.session_state.user_id = None
+        st.session_state.cv_id = None
         st.session_state.cv_text = ""
         st.session_state.session_id = None
         st.session_state.questions = []
@@ -1051,5 +1354,6 @@ if (
         st.session_state.provider = "ollama"
         st.session_state.question_start_time = None
         st.session_state.processed_questions = set()
+        st.session_state.auto_submit_question_id = None
 
         st.rerun()

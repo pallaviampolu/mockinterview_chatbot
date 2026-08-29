@@ -1,3 +1,4 @@
+
 from sqlalchemy import Column
 from sqlalchemy import Integer
 from sqlalchemy import String
@@ -11,11 +12,19 @@ from sqlalchemy.orm import relationship
 from database import Base
 
 
+# ============================================================
+# User
+# ============================================================
+
 class User(Base):
 
     __tablename__ = "users"
 
-    user_id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(
+        Integer,
+        primary_key=True,
+        index=True
+    )
 
     role = Column(String)
 
@@ -24,17 +33,34 @@ class User(Base):
         server_default=func.now()
     )
 
-    cvs = relationship("CV", back_populates="user")
-    sessions = relationship("InterviewSession", back_populates="user")
+    cvs = relationship(
+        "CV",
+        back_populates="user"
+    )
 
+    sessions = relationship(
+        "InterviewSession",
+        back_populates="user"
+    )
+
+
+# ============================================================
+# CV
+# ============================================================
 
 class CV(Base):
 
     __tablename__ = "cvs"
 
-    cv_id = Column(Integer, primary_key=True)
+    cv_id = Column(
+        Integer,
+        primary_key=True
+    )
 
-    user_id = Column(Integer, ForeignKey("users.user_id"))
+    user_id = Column(
+        Integer,
+        ForeignKey("users.user_id")
+    )
 
     cv_text = Column(Text)
 
@@ -47,22 +73,34 @@ class CV(Base):
         server_default=func.now()
     )
 
-    user = relationship("User", back_populates="cvs")
+    user = relationship(
+        "User",
+        back_populates="cvs"
+    )
 
+
+# ============================================================
+# Interview Session
+# ============================================================
 
 class InterviewSession(Base):
 
     __tablename__ = "interview_sessions"
 
-    session_id = Column(Integer, primary_key=True)
+    session_id = Column(
+        Integer,
+        primary_key=True
+    )
 
-    user_id = Column(Integer, ForeignKey("users.user_id"))
+    user_id = Column(
+        Integer,
+        ForeignKey("users.user_id")
+    )
 
     job_role = Column(String)
 
     interview_type = Column(String)
 
-    # LLM provider used for this interview
     provider = Column(String)
 
     created_at = Column(
@@ -70,50 +108,110 @@ class InterviewSession(Base):
         server_default=func.now()
     )
 
-    user = relationship("User", back_populates="sessions")
+    user = relationship(
+        "User",
+        back_populates="sessions"
+    )
 
-    questions = relationship("Question", back_populates="session")
+    questions = relationship(
+        "Question",
+        back_populates="session"
+    )
 
+
+# ============================================================
+# Question
+# ============================================================
 
 class Question(Base):
 
     __tablename__ = "questions"
 
-    question_id = Column(Integer, primary_key=True)
+    question_id = Column(
+        Integer,
+        primary_key=True
+    )
 
-    session_id = Column(Integer, ForeignKey("interview_sessions.session_id"))
+    session_id = Column(
+        Integer,
+        ForeignKey(
+            "interview_sessions.session_id"
+        )
+    )
 
     question_text = Column(Text)
 
     question_type = Column(String)
 
-    session = relationship("InterviewSession", back_populates="questions")
+    session = relationship(
+        "InterviewSession",
+        back_populates="questions"
+    )
 
-    responses = relationship("Response", back_populates="question")
+    responses = relationship(
+        "Response",
+        back_populates="question"
+    )
 
+
+# ============================================================
+# Response
+# ============================================================
 
 class Response(Base):
 
     __tablename__ = "responses"
 
-    response_id = Column(Integer, primary_key=True)
+    response_id = Column(
+        Integer,
+        primary_key=True
+    )
 
-    question_id = Column(Integer, ForeignKey("questions.question_id"))
+    # One question = one candidate response
+    question_id = Column(
+        Integer,
+        ForeignKey("questions.question_id"),
+        unique=True,
+        nullable=False
+    )
 
-    answer_text = Column(Text)
+    answer_text = Column(
+        Text,
+        nullable=False
+    )
 
-    question = relationship("Question", back_populates="responses")
+    question = relationship(
+        "Question",
+        back_populates="responses"
+    )
 
-    evaluation = relationship("Evaluation", back_populates="response", uselist=False)
+    evaluation = relationship(
+        "Evaluation",
+        back_populates="response",
+        uselist=False
+    )
 
+
+# ============================================================
+# Evaluation
+# ============================================================
 
 class Evaluation(Base):
 
     __tablename__ = "evaluations"
 
-    evaluation_id = Column(Integer, primary_key=True)
+    evaluation_id = Column(
+        Integer,
+        primary_key=True
+    )
 
-    response_id = Column(Integer, ForeignKey("responses.response_id"))
+    # One response = one evaluation
+    response_id = Column(
+        Integer,
+        ForeignKey("responses.response_id"),
+        unique=True,
+        nullable=False
+    )
 
     score = Column(Integer)
 
@@ -121,4 +219,7 @@ class Evaluation(Base):
 
     rubric = Column(Text)
 
-    response = relationship("Response", back_populates="evaluation")
+    response = relationship(
+        "Response",
+        back_populates="evaluation"
+    )

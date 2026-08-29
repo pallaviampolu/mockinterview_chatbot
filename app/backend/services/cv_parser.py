@@ -3,7 +3,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-import fitz
+import pymupdf
 from docx import Document
 
 
@@ -93,7 +93,7 @@ def extract_text_from_pdf(file_bytes: bytes) -> str:
     Extract text from a PDF file using PyMuPDF.
     """
     try:
-        with fitz.open(stream=file_bytes, filetype="pdf") as document:
+        with pymupdf.open(stream=file_bytes, filetype="pdf") as document:
             pages: list[str] = []
 
             for page in document:

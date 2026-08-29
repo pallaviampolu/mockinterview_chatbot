@@ -5,12 +5,18 @@ import json
 from sqlalchemy.orm import Session
 
 from models import (
+    User,
+    CV,
     InterviewSession,
     Question,
     Response,
     Evaluation,
-    User,
 )
+
+
+# ============================================================
+# Create User
+# ============================================================
 
 def create_user(
     db: Session,
@@ -28,6 +34,30 @@ def create_user(
     return user
 
 
+# ============================================================
+# Save CV
+# ============================================================
+
+def save_cv(
+    db: Session,
+    user_id: int,
+    cv_text: str,
+    skills: str = "",
+    experience: str = "",
+) -> CV:
+
+    cv = CV(
+        user_id=user_id,
+        cv_text=cv_text,
+        skills=skills,
+        experience=experience,
+    )
+
+    db.add(cv)
+    db.commit()
+    db.refresh(cv)
+
+    return cv
 
 
 # ============================================================
@@ -45,8 +75,8 @@ def create_interview_session(
     interview_session = InterviewSession(
         user_id=user_id,
         job_role=job_role,
-        interview_type=interview_type,
         provider=provider,
+        interview_type=interview_type,
     )
 
     db.add(interview_session)
@@ -57,31 +87,25 @@ def create_interview_session(
 
 
 # ============================================================
-# Save Single Question
+# Get Interview Session
 # ============================================================
 
-def save_question(
+def get_interview_session(
     db: Session,
     session_id: int,
-    question_text: str,
-    question_type: str = "personalised",
-) -> Question:
+) -> InterviewSession | None:
 
-    question = Question(
-        session_id=session_id,
-        question_text=question_text,
-        question_type=question_type,
+    return (
+        db.query(InterviewSession)
+        .filter(
+            InterviewSession.session_id == session_id
+        )
+        .first()
     )
-
-    db.add(question)
-    db.commit()
-    db.refresh(question)
-
-    return question
 
 
 # ============================================================
-# Save Multiple Questions
+# Save Questions
 # ============================================================
 
 def save_questions(
@@ -102,7 +126,10 @@ def save_questions(
         )
 
         db.add(question)
-        saved_questions.append(question)
+
+        saved_questions.append(
+            question
+        )
 
     db.commit()
 
@@ -110,6 +137,42 @@ def save_questions(
         db.refresh(question)
 
     return saved_questions
+
+
+# ============================================================
+# Get Question
+# ============================================================
+
+def get_question(
+    db: Session,
+    question_id: int,
+) -> Question | None:
+
+    return (
+        db.query(Question)
+        .filter(
+            Question.question_id == question_id
+        )
+        .first()
+    )
+
+
+# ============================================================
+# Get Response for Question
+# ============================================================
+
+def get_response_by_question(
+    db: Session,
+    question_id: int,
+) -> Response | None:
+
+    return (
+        db.query(Response)
+        .filter(
+            Response.question_id == question_id
+        )
+        .first()
+    )
 
 
 # ============================================================
@@ -122,16 +185,65 @@ def save_response(
     answer_text: str,
 ) -> Response:
 
+    # Prevent duplicate response
+    existing_response = (
+        get_response_by_question(
+            db=db,
+            question_id=question_id,
+        )
+    )
+
+    if existing_response is not None:
+        return existing_response
+
     response = Response(
         question_id=question_id,
         answer_text=answer_text,
     )
 
     db.add(response)
-    db.commit()
-    db.refresh(response)
+
+    try:
+
+        db.commit()
+        db.refresh(response)
+
+    except Exception:
+
+        db.rollback()
+
+        # Check if another request created it
+        existing_response = (
+            get_response_by_question(
+                db=db,
+                question_id=question_id,
+            )
+        )
+
+        if existing_response is not None:
+            return existing_response
+
+        raise
 
     return response
+
+
+# ============================================================
+# Get Evaluation
+# ============================================================
+
+def get_evaluation_by_response(
+    db: Session,
+    response_id: int,
+) -> Evaluation | None:
+
+    return (
+        db.query(Evaluation)
+        .filter(
+            Evaluation.response_id == response_id
+        )
+        .first()
+    )
 
 
 # ============================================================
@@ -143,27 +255,17 @@ def save_evaluation(
     response_id: int,
     evaluation_data: dict,
 ) -> Evaluation:
-    """
-    Save the complete rubric result.
 
-    The current Evaluation model contains:
-    - score
-    - feedback
-    - rubric
-
-    Therefore the 5 criterion scores are stored
-    as JSON inside the rubric column.
-    """
-
-    total_score = evaluation_data.get(
-        "total_score",
-        0,
+    # Prevent duplicate evaluation
+    existing_evaluation = (
+        get_evaluation_by_response(
+            db=db,
+            response_id=response_id,
+        )
     )
 
-    overall_feedback = evaluation_data.get(
-        "overall_feedback",
-        "",
-    )
+    if existing_evaluation is not None:
+        return existing_evaluation
 
     rubric_data = {
         "relevance": evaluation_data.get(
@@ -190,34 +292,43 @@ def save_evaluation(
 
     evaluation = Evaluation(
         response_id=response_id,
-        score=total_score,
-        feedback=overall_feedback,
-        rubric=json.dumps(rubric_data),
+        score=evaluation_data.get(
+            "total_score",
+            0,
+        ),
+        feedback=evaluation_data.get(
+            "overall_feedback",
+            "",
+        ),
+        rubric=json.dumps(
+            rubric_data
+        ),
     )
 
     db.add(evaluation)
-    db.commit()
-    db.refresh(evaluation)
+
+    try:
+
+        db.commit()
+        db.refresh(evaluation)
+
+    except Exception:
+
+        db.rollback()
+
+        existing_evaluation = (
+            get_evaluation_by_response(
+                db=db,
+                response_id=response_id,
+            )
+        )
+
+        if existing_evaluation is not None:
+            return existing_evaluation
+
+        raise
 
     return evaluation
-
-
-# ============================================================
-# Get Interview Session
-# ============================================================
-
-def get_interview_session(
-    db: Session,
-    session_id: int,
-) -> InterviewSession | None:
-
-    return (
-        db.query(InterviewSession)
-        .filter(
-            InterviewSession.session_id == session_id
-        )
-        .first()
-    )
 
 
 # ============================================================
@@ -234,48 +345,15 @@ def get_session_questions(
         .filter(
             Question.session_id == session_id
         )
+        .order_by(
+            Question.question_id
+        )
         .all()
     )
 
 
 # ============================================================
-# Get Response by Question
-# ============================================================
-
-def get_response_by_question(
-    db: Session,
-    question_id: int,
-) -> Response | None:
-
-    return (
-        db.query(Response)
-        .filter(
-            Response.question_id == question_id
-        )
-        .first()
-    )
-
-
-# ============================================================
-# Get Evaluation by Response
-# ============================================================
-
-def get_evaluation_by_response(
-    db: Session,
-    response_id: int,
-) -> Evaluation | None:
-
-    return (
-        db.query(Evaluation)
-        .filter(
-            Evaluation.response_id == response_id
-        )
-        .first()
-    )
-
-
-# ============================================================
-# Calculate Interview Score
+# Calculate Session Score
 # ============================================================
 
 def calculate_session_score(
@@ -309,7 +387,10 @@ def calculate_session_score(
         if evaluation is None:
             continue
 
-        total_score += evaluation.score
+        total_score += (
+            evaluation.score or 0
+        )
+
         evaluated_answers += 1
 
     if evaluated_answers == 0:
@@ -323,7 +404,9 @@ def calculate_session_score(
             "percentage": 0,
         }
 
-    maximum_score = evaluated_answers * 25
+    maximum_score = (
+        evaluated_answers * 25
+    )
 
     average_score = (
         total_score / evaluated_answers
