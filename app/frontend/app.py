@@ -36,16 +36,13 @@ st.markdown(
     <h1 style="margin: 0; padding: 0; line-height: 1;">
         MOCK-BOT
     </h1>
-
     <div style="
         text-align: right;
         font-size: 13px;
         color: grey;
         margin-top: -2px;
         line-height: 1;
-    ">
-        an interview preparation chatbot
-    </div>
+    "> an interview preparation chatbot
 </div>
 """,
     unsafe_allow_html=True,
